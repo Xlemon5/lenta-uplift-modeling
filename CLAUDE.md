@@ -26,11 +26,13 @@ pip install scikit-uplift pandas numpy matplotlib seaborn scipy scikit-learn lig
 │       ├── y_train.csv / y_test.csv
 │       ├── treatment_train.csv / treatment_test.csv  (strings 'test'/'control')
 │       └── preprocessing_pipeline.pkl
+│   Note: X_train.csv (420MB) and X_test.csv (180MB) stored via Git LFS
 ├── reports/
 │   ├── eda_summary.md           # Detailed EDA findings (in Russian)
 │   └── modeling_results.md      # Modeling results & analysis (in Russian)
 ├── columns_description.md       # Feature descriptions from dataset source
 ├── todo.md                      # 7-stage project checklist with results (in Russian)
+├── .gitattributes               # Git LFS tracking for large CSV files
 └── catboost_info/               # CatBoost training logs (auto-generated, not tracked)
 ```
 
@@ -117,6 +119,19 @@ Execute via command line (VS Code kernel may use wrong Python):
 python3 -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=900 eda.ipynb --output eda.ipynb
 python3 -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=900 modeling.ipynb --output modeling.ipynb
 ```
+
+## Git LFS
+
+Large data files are tracked with Git LFS. After cloning, run:
+```bash
+git lfs install
+git lfs pull
+```
+Tracked files: `data/processed/X_train.csv`, `data/processed/X_test.csv`.
+
+## Repository
+
+GitHub: `Xlemon5/lenta-uplift-modeling` (master branch).
 
 ## Library Documentation
 
