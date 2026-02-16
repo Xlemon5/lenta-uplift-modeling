@@ -4,9 +4,6 @@ catboost_info/
 # Claude Code local settings
 .claude/
 
-# Processed data (regenerated from eda.ipynb)
-data/processed/
-
 # Python
 __pycache__/
 *.pyc
