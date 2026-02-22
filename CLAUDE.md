@@ -94,7 +94,8 @@ sklearn.utils.check_matplotlib_support = check_matplotlib_support
 
 - Use scikit-uplift (`sklift`) for uplift approaches: `SoloModel` (S-learner), `TwoModels` (T-learner), `ClassTransformation`
 - Best base learner: **LightGBM** (faster and slightly better than CatBoost for this task)
-- Evaluation metrics: uplift@k, Qini AUC, Uplift AUC (NOT standard AUC/accuracy)
+- Evaluation metrics: uplift@k, Qini AUC, Uplift AUC, ASD (NOT standard AUC/accuracy)
+  - **ASD** (Average Squared Deviation) = `mean((actual_uplift_k − predicted_uplift_k)²)` over 10 deciles. Measures calibration (lower = better). High Qini AUC and high ASD can coexist: CT has excellent ranking but poor calibration (predictions don't match actual uplift magnitudes). Meta-learners have low ASD but poor Qini AUC.
 - **Do NOT use `ClassTransformationReg`** — it requires `propensity_val` parameter and produces near-zero Qini AUC on this dataset. Use `ClassTransformation` (classifier version) instead.
 - **Do NOT balance treatment/control for Class Transformation** — the method has built-in IPW correction via the Z-transform formula (divides by propensity). Additional balancing (downsampling, oversampling, IPW weighting) causes double correction and degrades Qini AUC by ~60%. Balancing slightly helps T-Learner (+33%) but its absolute performance remains 4x worse than CT.
 - Class Transformation predicted uplift values are often negative — this is expected; only the **ranking** matters, not absolute values
