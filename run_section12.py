@@ -1,4 +1,4 @@
-"""Standalone script: CT-guided SMOTE on top-10% experiment (Section 12)."""
+"""Standalone script: CT-guided SMOTE — top-10% control as template for full dataset."""
 import time
 import warnings
 warnings.filterwarnings('ignore')
@@ -18,28 +18,27 @@ treatment_test  = pd.read_csv('data/processed/treatment_test.csv').squeeze()
 treatment_train = (treatment_train == 'test').astype(int)
 treatment_test  = (treatment_test  == 'test').astype(int)
 print(f"Train: {X_train.shape}, Test: {X_test.shape}")
+print(f"T/C: {treatment_train.mean():.4f} / {1-treatment_train.mean():.4f}")
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from lightgbm import LGBMClassifier
 from sklift.models import ClassTransformation, SoloModel, TwoModels
 from sklift.metrics import qini_auc_score, uplift_auc_score
 
-# ASD helper (same as notebook)
 def asd_score(y_true, uplift_scores, treatment, n_bins=10):
     df = pd.DataFrame({'y': y_true, 'score': uplift_scores, 't': treatment})
     df['bin'] = pd.qcut(df['score'].rank(method='first'), n_bins, labels=False)
     deviations = []
     for b in range(n_bins):
-        mask = df['bin'] == b
-        sub  = df[mask]
+        sub = df[df['bin'] == b]
         if sub['t'].nunique() < 2:
             continue
-        actual_uplift    = sub.loc[sub['t']==1,'y'].mean() - sub.loc[sub['t']==0,'y'].mean()
-        predicted_uplift = sub['score'].mean()
-        deviations.append((actual_uplift - predicted_uplift) ** 2)
+        actual    = sub.loc[sub['t']==1,'y'].mean() - sub.loc[sub['t']==0,'y'].mean()
+        predicted = sub['score'].mean()
+        deviations.append((actual - predicted) ** 2)
     return float(np.mean(deviations)) if deviations else np.nan
 
-# ── ControlGroupSMOTE (same as Section 10) ───────────────────────────────────
+# ── ControlGroupSMOTE ─────────────────────────────────────────────────────────
 class ControlGroupSMOTE:
     def __init__(self, random_state=42):
         self.rng = np.random.RandomState(random_state)
@@ -47,11 +46,11 @@ class ControlGroupSMOTE:
     def fit(self, X, y):
         self.X_ = X.values if hasattr(X, 'values') else X
         self.y_ = y.values if hasattr(y, 'values') else y
-        # Identify binary columns (0/1 only)
         self.binary_cols_ = [
             j for j in range(self.X_.shape[1])
             if np.all(np.isin(self.X_[:, j], [0, 1]))
         ]
+        self.columns_ = X.columns if hasattr(X, 'columns') else None
         return self
 
     def generate(self, n_samples):
@@ -63,10 +62,10 @@ class ControlGroupSMOTE:
         for j in self.binary_cols_:
             X_syn[:, j] = np.round(X_syn[:, j]).astype(int)
         y_syn = np.where(alpha.flatten() <= 0.5, self.y_[idx_a], self.y_[idx_b])
-        cols = pd.RangeIndex(self.X_.shape[1])
+        cols = self.columns_ if self.columns_ is not None else range(self.X_.shape[1])
         return pd.DataFrame(X_syn, columns=cols), pd.Series(y_syn)
 
-# ── Step 1: Fit CT and score training data ────────────────────────────────────
+# ── Step 1: Fit CT and identify top-10% control observations ─────────────────
 print("\nFitting CT+LGB to score training data...")
 t0 = time.time()
 ct_best = ClassTransformation(LGBMClassifier(
@@ -75,64 +74,88 @@ ct_best = ClassTransformation(LGBMClassifier(
 ))
 ct_best.fit(X_train, y_train, treatment_train)
 ct_train_scores = ct_best.predict(X_train)
-print(f"  CT fit+predict done in {time.time()-t0:.1f}s")
+print(f"  done in {time.time()-t0:.1f}s")
 
-# ── Step 2: Filter top 10% ────────────────────────────────────────────────────
 threshold = np.percentile(ct_train_scores, 90)
 top10_mask = ct_train_scores >= threshold
 
-X_top = X_train[top10_mask].reset_index(drop=True)
-y_top = y_train[top10_mask].reset_index(drop=True)
-t_top = treatment_train[top10_mask].reset_index(drop=True)
+# Control observations in top-10% — these are our SMOTE template
+ctrl_mask    = treatment_train == 0
+top10_ctrl_mask = top10_mask & ctrl_mask
 
-print(f"\nTop 10% subset: {top10_mask.sum():,} rows")
-print(f"T/C ratio: {t_top.mean():.4f} / {1-t_top.mean():.4f}")
-print(f"CR: {y_top.mean():.4f}")
+X_ctrl_top10 = X_train[top10_ctrl_mask].reset_index(drop=True)
+y_ctrl_top10 = y_train[top10_ctrl_mask].reset_index(drop=True)
 
-# ── Step 3: SMOTE within top-10% ──────────────────────────────────────────────
-ctrl_mask_top = t_top == 0
-X_ctrl_top = X_top[ctrl_mask_top].reset_index(drop=True)
-y_ctrl_top = y_top[ctrl_mask_top].reset_index(drop=True)
-X_trt_top  = X_top[~ctrl_mask_top].reset_index(drop=True)
-y_trt_top  = y_top[~ctrl_mask_top].reset_index(drop=True)
+# Full control pool (for comparison)
+X_ctrl_full  = X_train[ctrl_mask].reset_index(drop=True)
+y_ctrl_full  = y_train[ctrl_mask].reset_index(drop=True)
 
-n_gen = len(X_trt_top) - len(X_ctrl_top)
-print(f'\nTreatment: {len(X_trt_top):,}  Control: {len(X_ctrl_top):,}  Generate: {n_gen:,}')
+X_trt        = X_train[~ctrl_mask].reset_index(drop=True)
+y_trt        = y_train[~ctrl_mask].reset_index(drop=True)
 
-smote_top = ControlGroupSMOTE(random_state=42)
-smote_top.fit(X_ctrl_top, y_ctrl_top)
-X_syn_top, y_syn_top = smote_top.generate(n_gen)
-# Restore column names
-X_syn_top.columns = X_ctrl_top.columns
+n_generate   = len(X_trt) - len(X_ctrl_full)  # ~241K to reach 50/50
 
-t_ctrl_ser = pd.Series([0]*len(X_ctrl_top), name='treatment')
-t_syn_ser  = pd.Series([0]*n_gen,            name='treatment')
-t_trt_ser  = pd.Series([1]*len(X_trt_top),  name='treatment')
+print(f"\nFull control pool:         {len(X_ctrl_full):,} rows, CR={y_ctrl_full.mean():.4f}")
+print(f"Top-10% control template:  {len(X_ctrl_top10):,} rows, CR={y_ctrl_top10.mean():.4f}")
+print(f"Treatment:                 {len(X_trt):,} rows")
+print(f"To generate (50/50 full):  {n_generate:,} rows")
 
-X_top_bal = pd.concat([X_ctrl_top, X_syn_top, X_trt_top], ignore_index=True)
-y_top_bal = pd.concat([y_ctrl_top, y_syn_top, y_trt_top], ignore_index=True)
-t_top_bal = pd.concat([t_ctrl_ser, t_syn_ser,  t_trt_ser], ignore_index=True)
+# ── Step 2: SMOTE from top-10% control template ───────────────────────────────
+print("\nGenerating synthetic control from top-10% template...")
+t0 = time.time()
+smote_top10 = ControlGroupSMOTE(random_state=42)
+smote_top10.fit(X_ctrl_top10, y_ctrl_top10)
+X_syn_top10, y_syn_top10 = smote_top10.generate(n_generate)
+print(f"  Generated {len(X_syn_top10):,} rows in {time.time()-t0:.1f}s")
+print(f"  Synthetic CR: {y_syn_top10.mean():.4f} (source CR: {y_ctrl_top10.mean():.4f})")
 
-shuffle_idx = np.random.RandomState(42).permutation(len(X_top_bal))
-X_top_bal = X_top_bal.iloc[shuffle_idx].reset_index(drop=True)
-y_top_bal = y_top_bal.iloc[shuffle_idx].reset_index(drop=True)
-t_top_bal = t_top_bal.iloc[shuffle_idx].reset_index(drop=True)
+# Build augmented dataset: full real train + synthetic top-10% control
+t_syn_ser = pd.Series([0] * n_generate, name='treatment')
 
-print(f'\nBalanced top-10% subset: {len(X_top_bal):,} rows, T rate: {t_top_bal.mean():.4f}')
+X_aug = pd.concat([X_train, X_syn_top10], ignore_index=True)
+y_aug = pd.concat([y_train, y_syn_top10], ignore_index=True)
+t_aug = pd.concat([treatment_train, t_syn_ser], ignore_index=True)
 
-# ── Step 4: Train S/T-Learner, evaluate on full test ──────────────────────────
+shuffle_idx = np.random.RandomState(42).permutation(len(X_aug))
+X_aug = X_aug.iloc[shuffle_idx].reset_index(drop=True)
+y_aug = y_aug.iloc[shuffle_idx].reset_index(drop=True)
+t_aug = t_aug.iloc[shuffle_idx].reset_index(drop=True)
+
+print(f"\nAugmented dataset: {len(X_aug):,} rows, T rate: {t_aug.mean():.4f}")
+
+# ── Step 3: Also build Section 11 style dataset (SMOTE from full control) ─────
+print("\nGenerating Section 11 baseline (SMOTE from full control)...")
+t0 = time.time()
+smote_full = ControlGroupSMOTE(random_state=42)
+smote_full.fit(X_ctrl_full, y_ctrl_full)
+X_syn_full, y_syn_full = smote_full.generate(n_generate)
+print(f"  Generated {len(X_syn_full):,} rows in {time.time()-t0:.1f}s")
+print(f"  Synthetic CR: {y_syn_full.mean():.4f} (source CR: {y_ctrl_full.mean():.4f})")
+
+t_syn_ser2 = pd.Series([0] * n_generate, name='treatment')
+X_aug_full = pd.concat([X_train, X_syn_full], ignore_index=True)
+y_aug_full = pd.concat([y_train, y_syn_full], ignore_index=True)
+t_aug_full = pd.concat([treatment_train, t_syn_ser2], ignore_index=True)
+
+shuffle_idx2 = np.random.RandomState(42).permutation(len(X_aug_full))
+X_aug_full = X_aug_full.iloc[shuffle_idx2].reset_index(drop=True)
+y_aug_full = y_aug_full.iloc[shuffle_idx2].reset_index(drop=True)
+t_aug_full = t_aug_full.iloc[shuffle_idx2].reset_index(drop=True)
+
+# ── Step 4: Train and evaluate ────────────────────────────────────────────────
 lgbm_params = dict(n_estimators=500, max_depth=6, num_leaves=31,
                    learning_rate=0.05, random_state=42, verbose=-1)
 
-top10_results = []
-
 configs = [
-    ('S-Learner (full 75/25)',    X_train,   y_train,   treatment_train),
-    ('S-Learner (top-10% SMOTE)', X_top_bal, y_top_bal, t_top_bal),
-    ('T-Learner (full 75/25)',    X_train,   y_train,   treatment_train),
-    ('T-Learner (top-10% SMOTE)', X_top_bal, y_top_bal, t_top_bal),
+    ('S-Learner (original 75/25)',       X_train,    y_train,    treatment_train),
+    ('S-Learner (SMOTE full ctrl)',       X_aug_full, y_aug_full, t_aug_full),
+    ('S-Learner (SMOTE top-10% ctrl)',   X_aug,      y_aug,      t_aug),
+    ('T-Learner (original 75/25)',       X_train,    y_train,    treatment_train),
+    ('T-Learner (SMOTE full ctrl)',       X_aug_full, y_aug_full, t_aug_full),
+    ('T-Learner (SMOTE top-10% ctrl)',   X_aug,      y_aug,      t_aug),
 ]
 
+results = []
 for label, X_tr, y_tr, t_tr in configs:
     t0 = time.time()
     if label.startswith('S'):
@@ -149,19 +172,21 @@ for label, X_tr, y_tr, t_tr in configs:
         'ASD':        asd_score(y_test, pred, treatment_test),
         'time_s':     round(elapsed, 1),
     }
-    top10_results.append(row)
-    print(f"{label}: Qini AUC={row['Qini AUC']:.4f}  Uplift AUC={row['Uplift AUC']:.4f}  ASD={row['ASD']:.6f}  ({elapsed:.1f}s)")
+    results.append(row)
+    print(f"{label}: Qini={row['Qini AUC']:.4f}  Uplift={row['Uplift AUC']:.4f}  ASD={row['ASD']:.6f}  ({elapsed:.1f}s)")
 
-# ── Step 5: Summary table ─────────────────────────────────────────────────────
-top10_df = pd.DataFrame(top10_results).set_index('Model')
-print('\n=== CT-guided SMOTE на топ-10% ===')
-print(top10_df.to_string(float_format='{:.6f}'.format))
+# ── Step 5: Summary ───────────────────────────────────────────────────────────
+df = pd.DataFrame(results).set_index('Model')
+print('\n=== CT-guided SMOTE (top-10% ctrl as template) ===')
+print(df.to_string(float_format='{:.6f}'.format))
 
-print('\n=== Delta vs baseline ===')
-for base_label, smote_label in [
-    ('S-Learner (full 75/25)',    'S-Learner (top-10% SMOTE)'),
-    ('T-Learner (full 75/25)',    'T-Learner (top-10% SMOTE)'),
+print('\n=== Delta vs original ===')
+for base, comp in [
+    ('S-Learner (original 75/25)', 'S-Learner (SMOTE full ctrl)'),
+    ('S-Learner (original 75/25)', 'S-Learner (SMOTE top-10% ctrl)'),
+    ('T-Learner (original 75/25)', 'T-Learner (SMOTE full ctrl)'),
+    ('T-Learner (original 75/25)', 'T-Learner (SMOTE top-10% ctrl)'),
 ]:
-    orig = top10_df.loc[base_label, 'Qini AUC']
-    new  = top10_df.loc[smote_label,'Qini AUC']
-    print(f"{smote_label.split('(')[0].strip()}: {orig:.4f} → {new:.4f}  ({(new-orig)/orig*100:+.1f}%)")
+    orig = df.loc[base, 'Qini AUC']
+    new  = df.loc[comp, 'Qini AUC']
+    print(f"  {comp}: {orig:.4f} → {new:.4f}  ({(new-orig)/orig*100:+.1f}%)")
