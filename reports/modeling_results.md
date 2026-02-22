@@ -394,3 +394,64 @@ Balanced dataset: 722,248 строк (361K treatment + 120K real control + 241K 
 - **S-Learner**: нейтрально (±1%)
 
 **Оптимальная стратегия: оригинальные данные 75/25 + Class Transformation + LightGBM.**
+
+---
+
+## 12. Advanced Meta-Learners: X-Learner, DR-Learner, R-Learner, CausalForestDML
+
+> Ноутбук: `modeling.ipynb`, Секция 11
+> Библиотеки: `causalml` 0.16.0, `econml` 0.16.0
+> Дата: 2026-02-22
+
+### 12.1 Мотивация
+
+Дисбаланс treatment/control (75%/25%) — потенциальная проблема для T-Learner (разные объёмы обучающих выборок). Методы X-Learner, DR-Learner, R-Learner и CausalForestDML явно используют propensity score для коррекции этого дисбаланса. Проверяем: могут ли они превзойти CT baseline (Qini AUC = 0.0752)?
+
+### 12.2 Методы
+
+| Модель | Библиотека | Метод коррекции дисбаланса |
+|--------|-----------|--------------------------|
+| X-Learner | causalml | Propensity-weighted average τ(x) = g(x)·τ₀ + (1−g(x))·τ₁ |
+| DR-Learner | causalml | Doubly robust pseudo-outcomes |
+| R-Learner | causalml | Residual-on-residual: E[(Y−m(X) − (W−e(X))·τ(X))²] |
+| CausalForestDML | econml | Honest causal forest + DML residualization |
+
+**Общий propensity model:** LGBMClassifier (n_estimators=200, max_depth=4), 5-fold cross-val для train, fitted для test. Время fitting: 28s.
+
+**Base learner:** LGBMRegressor (n_estimators=200, max_depth=4, learning_rate=0.1) для всех.
+
+**CausalForestDML:** обучался на 80K случайной подвыборке (полный fit 480K × 244 превышает 900s cell timeout), n_estimators=200.
+
+### 12.3 Результаты
+
+| Модель | Qini AUC | Uplift AUC | vs CT (abs) | vs CT (%) | Время |
+|--------|----------|------------|-------------|-----------|-------|
+| CT + LightGBM (baseline) | **0.0752** | — | — | — | — |
+| DR-Learner (LightGBM) | 0.0073 | 0.0040 | −0.0679 | **−90.3%** | 18.5s |
+| R-Learner (LightGBM) | 0.0072 | 0.0040 | −0.0680 | **−90.4%** | 28.2s |
+| X-Learner (LightGBM) | 0.0060 | 0.0033 | −0.0692 | **−92.0%** | 14.2s |
+| CausalForestDML (80K) | 0.0048 | 0.0026 | −0.0704 | **−93.6%** | 200s |
+
+### 12.4 Анализ
+
+**Все advanced meta-learners уступают CT baseline на 90%+ по Qini AUC.** Это неожиданный, но объяснимый результат.
+
+**Причина 1 — несоответствие objective:** X-Learner, DR-Learner, R-Learner минимизируют MSE для оценки CATE как непрерывной величины. Qini AUC оценивает **ранжирование** клиентов по uplift. Точная оценка τ(x) ≠ хорошее ранжирование. Class Transformation напрямую строит бинарный классификатор, оптимизирующий именно разделение «откликнется на рассылку / не откликнется».
+
+**Причина 2 — малый эффект:** Истинный ATE ≈ +0.75 п.п. (очень маленький). CATE-оценки получаются шумными (MSE-loss не «фокусируется» на ранжировании). Class Transformation использует тот же сигнал, но в задаче классификации, где градиент более информативен.
+
+**Причина 3 — дисбаланс не является узким местом:** Class Transformation со встроенной IPW-коррекцией (Z-transform formula) корректно обрабатывает 75/25 соотношение. Дополнительная propensity-модель в X/DR/R-Learner не даёт преимуществ поверх этой коррекции.
+
+### 12.5 Итоговый вывод
+
+Advanced meta-learners из causalml/econml, специально разработанные для оценки CATE и коррекции T/C дисбаланса, **значительно хуже** Class Transformation на задаче uplift-ранжирования (Qini AUC):
+
+```
+CT + LightGBM:   0.0752  ← лучшая модель (×10 лучше meta-learners)
+DR-Learner:      0.0073
+R-Learner:       0.0072
+X-Learner:       0.0060
+CausalForestDML: 0.0048
+```
+
+**Итоговая рекомендация:** Class Transformation + LightGBM (Qini AUC = **0.0752**) остаётся лучшей моделью для данного датасета.

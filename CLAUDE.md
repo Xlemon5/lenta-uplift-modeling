@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Uplift Modeling project on the Lenta retail dataset (BigTarget Hackathon, Лента + Microsoft, 2020). Binary classification task estimating the causal effect of marketing communications (treatment) on customer store visits/purchases (target: `response_att`).
 
-**Current status:** EDA, preprocessing, baseline modeling, hyperparameter tuning, and balance experiments complete. Best model: **Class Transformation + LightGBM** (Qini AUC = 0.0752). See `reports/modeling_results.md` for detailed results and `reports/eda_summary.md` for EDA findings.
+**Current status:** EDA, preprocessing, baseline modeling, hyperparameter tuning, balance experiments, and advanced meta-learner comparison complete. Best model: **Class Transformation + LightGBM** (Qini AUC = 0.0752). See `reports/modeling_results.md` for detailed results and `reports/eda_summary.md` for EDA findings.
 
 ## Setup
 
 ```bash
-pip install scikit-uplift pandas numpy matplotlib seaborn scipy scikit-learn lightgbm catboost
+pip install scikit-uplift pandas numpy matplotlib seaborn scipy scikit-learn lightgbm catboost causalml econml
 ```
 
 After cloning (large CSV files tracked via Git LFS):
@@ -109,14 +109,6 @@ LGBMClassifier(n_estimators=500, max_depth=6, num_leaves=31, learning_rate=0.05,
 
 Class Transformation dramatically outperforms S-Learner and T-Learner (~5x better Qini AUC) because it directly optimizes uplift ranking rather than estimating conditional outcomes.
 
-## Possible Next Experiments
-
-From `reports/modeling_results.md` section 9.3 — not yet implemented:
-- **X-Learner and DR-Learner** — more advanced meta-algorithms, available in `causalml` library
-- **Cross-validation with uplift metric** — more robust hyperparameter selection
-- **Prediction calibration** — for interpretable absolute uplift values (currently only ranking matters)
-- **Model stacking** — ensemble of CatBoost and LightGBM ClassTransformation models
-
 ## Completed Experiments (beyond baseline)
 
 ### Train vs Test overfitting (modeling.ipynb section 5.1)
@@ -126,6 +118,13 @@ T-Learner massively overfits: Qini AUC Train=0.278 vs Test=0.007 (42× gap). Cla
 Implemented `ControlGroupSMOTE` — random-pair interpolation (SMOTE without KNN, O(n×d)). Generated 241K synthetic control observations to achieve 50/50 balance. **Results: S-Learner −1%, T-Learner −41%.** Synthetic data hurts because test set is real-only. Full analysis in `reports/modeling_results.md` section 11.
 
 **Confirmed: no balancing strategy improves results. Original 75/25 + Class Transformation is optimal.**
+
+### Advanced meta-learners: X-Learner, DR-Learner, R-Learner, CausalForestDML (modeling.ipynb section 11)
+Libraries: `causalml` 0.16.0, `econml` 0.16.0. **All dramatically worse than CT baseline (~90% lower Qini AUC):**
+- DR-Learner: 0.0073, R-Learner: 0.0072, X-Learner: 0.0060, CausalForestDML (80K subsample): 0.0048
+- Root cause: MSE-optimizing CATE estimators ≠ good rankers for Qini AUC. CT's Z-transform binary classifier directly optimizes ranking. See `reports/modeling_results.md` section 12.
+- causalml API notes: `BaseDRLearner` takes no `propensity_learner` arg — pass `p=` to `fit()` and `predict()` instead. `BaseXRegressor.predict()` requires `p=` kwarg.
+- CausalForestDML on 480K×244 exceeds 900s per-cell timeout — use 80K subsample for notebook execution.
 
 ## Repository
 
