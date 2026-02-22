@@ -118,7 +118,7 @@ T-Learner massively overfits: Qini AUC Train=0.278 vs Test=0.007 (42× gap). Cla
 ### SMOTE generator for control group balancing (modeling.ipynb section 10)
 Implemented `ControlGroupSMOTE` — random-pair interpolation (SMOTE without KNN, O(n×d)). Generated 241K synthetic control observations to achieve 50/50 balance. **Results: S-Learner −1%, T-Learner −41%.** Synthetic data hurts because test set is real-only. Full analysis in `reports/modeling_results.md` section 11.
 
-**Confirmed: no balancing strategy improves results. Original 75/25 + Class Transformation is optimal.**
+**Confirmed: balancing does NOT help CT (−60%). For T-Learner, oversampling helps +33% but absolute quality remains 4× below CT. Original 75/25 + Class Transformation is optimal.**
 
 ### Advanced meta-learners: X-Learner, DR-Learner, R-Learner, CausalForestDML (modeling.ipynb section 11)
 Libraries: `causalml` 0.16.0, `econml` 0.16.0. **All dramatically worse than CT baseline (~90% lower Qini AUC):**
@@ -126,6 +126,9 @@ Libraries: `causalml` 0.16.0, `econml` 0.16.0. **All dramatically worse than CT 
 - Root cause: MSE-optimizing CATE estimators ≠ good rankers for Qini AUC. CT's Z-transform binary classifier directly optimizes ranking. See `reports/modeling_results.md` section 12.
 - causalml API notes: `BaseDRLearner` takes no `propensity_learner` arg — pass `p=` to `fit()` and `predict()` instead. `BaseXRegressor.predict()` requires `p=` kwarg.
 - CausalForestDML on 480K×244 exceeds 900s per-cell timeout — use 80K subsample for notebook execution.
+
+### CT-guided SMOTE: top-10% control as SMOTE template (modeling.ipynb section 12)
+Used CT scores to identify top-10% control observations (CR=17.7% vs 10.3% avg), used them as SMOTE source to generate 241K synthetic controls added to full train (722K total, 50/50 T/C). **Results: T-Learner +34.7% (0.0140→0.0189), S-Learner −68.2%.** T-Learner benefits because high-uplift-profile synthetic controls improve E[Y(0)|X] estimation in the high-uplift zone. S-Learner hurt by CR mismatch in the synthetic data. T-Learner still 4× below CT baseline. See `reports/modeling_results.md` section 13.
 
 ## Repository
 
