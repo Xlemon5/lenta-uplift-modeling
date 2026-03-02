@@ -122,7 +122,7 @@ Implemented `ControlGroupSMOTE` — random-pair interpolation (SMOTE without KNN
 
 ### Advanced meta-learners: X-Learner, DR-Learner, R-Learner, CausalForestDML (modeling.ipynb section 11)
 Libraries: `causalml` 0.16.0, `econml` 0.16.0. **All dramatically worse than CT baseline (~90% lower Qini AUC):**
-- DR-Learner: 0.0073, R-Learner: 0.0072, X-Learner: 0.0060, CausalForestDML (80K subsample): 0.0048
+- DR-Learner: 0.0096, R-Learner: 0.0100, X-Learner: 0.0060, CausalForestDML (80K subsample): 0.0048
 - Root cause: MSE-optimizing CATE estimators ≠ good rankers for Qini AUC. CT's Z-transform binary classifier directly optimizes ranking. See `reports/modeling_results.md` section 12.
 - causalml API notes: `BaseDRLearner` takes no `propensity_learner` arg — pass `p=` to `fit()` and `predict()` instead. `BaseXRegressor.predict()` requires `p=` kwarg.
 - CausalForestDML on 480K×244 exceeds 900s per-cell timeout — use 80K subsample for notebook execution.
