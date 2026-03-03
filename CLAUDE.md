@@ -27,6 +27,16 @@ python3 -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeo
 python3 -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=900 modeling.ipynb --output modeling.ipynb
 ```
 
+## Standalone Scripts
+
+For long-running experiments that exceed the 900s notebook cell timeout, use standalone Python scripts:
+```bash
+python3 run_section12.py   # CT-guided SMOTE: top-10% control as SMOTE template
+python3 run_section13_urf.py  # UpliftRandomForestClassifier experiment
+```
+
+**Note:** `run_section13_urf.py` contains a hardcoded `os.chdir('/Users/ilya/Desktop/lenta')` — update this path if the repo location changes, or run from the repo root and remove that line.
+
 ## Key Files
 
 Notebooks live at the repo root (no `src/` or `notebooks/` subdirs):
@@ -97,6 +107,13 @@ sklearn.utils.check_matplotlib_support = check_matplotlib_support
 - Evaluation metrics: uplift@k, Qini AUC, Uplift AUC, ASD (NOT standard AUC/accuracy)
   - **ASD** (Average Squared Deviation) = `mean((actual_uplift_k − predicted_uplift_k)²)` over 10 deciles. Measures calibration (lower = better). High Qini AUC and high ASD can coexist: CT has excellent ranking but poor calibration (predictions don't match actual uplift magnitudes). Meta-learners have low ASD but poor Qini AUC.
 - **Do NOT use `ClassTransformationReg`** — it requires `propensity_val` parameter and produces near-zero Qini AUC on this dataset. Use `ClassTransformation` (classifier version) instead.
+- **`UpliftRandomForestClassifier` (causalml)** requires string treatment labels — convert ints back before use:
+  ```python
+  t_str = treatment.map({1: 'test', 0: 'control'})
+  urf.fit(X.values, treatment=t_str.values, y=y.values)
+  urf.predict(X_test.values)  # pass .values, not DataFrame
+  ```
+  Set `control_name='control'` in constructor. Prediction returns a 2D array — use `.flatten()`.
 - **Do NOT balance treatment/control for Class Transformation** — the method has built-in IPW correction via the Z-transform formula (divides by propensity). Additional balancing (downsampling, oversampling, IPW weighting) causes double correction and degrades Qini AUC by ~60%. Balancing slightly helps T-Learner (+33%) but its absolute performance remains 4x worse than CT.
 - Class Transformation predicted uplift values are often negative — this is expected; only the **ranking** matters, not absolute values
 - Top features: `response_sms` (26.07), `response_viber` (20.59) dominate by a large margin. They have slight imbalance between treatment/control — account for in interpretation.
