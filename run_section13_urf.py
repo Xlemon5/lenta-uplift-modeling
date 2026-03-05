@@ -20,7 +20,7 @@ print(f"Train: {X_train.shape}, Test: {X_test.shape}")
 
 from lightgbm import LGBMClassifier
 from sklift.models import ClassTransformation
-from sklift.metrics import qini_auc_score, uplift_auc_score
+from sklift.metrics import qini_auc_score, uplift_auc_score, uplift_at_k
 from causalml.inference.tree import UpliftRandomForestClassifier
 
 def asd_score(y_true, uplift_pred, treatment, n_bins=10):
@@ -96,19 +96,26 @@ X_aug = X_aug.iloc[shuffle_idx].reset_index(drop=True)
 y_aug = y_aug.iloc[shuffle_idx].reset_index(drop=True)
 t_aug = t_aug.iloc[shuffle_idx].reset_index(drop=True)
 
-t_aug_str = t_aug.map({1: 'test', 0: 'control'})
-print(f"Augmented: {len(X_aug):,} rows, T rate: {t_aug.mean():.4f}")
+# Subsample 200K to match notebook config (same as modeling.ipynb cell 90)
+_aug_idx = np.random.RandomState(42).choice(len(X_aug), size=200_000, replace=False)
+X_aug_urf = X_aug.iloc[_aug_idx].reset_index(drop=True)
+y_aug_urf = y_aug.iloc[_aug_idx].reset_index(drop=True)
+t_aug_urf = t_aug.iloc[_aug_idx].reset_index(drop=True)
+t_aug_urf_str = t_aug_urf.map({1: 'test', 0: 'control'})
+print(f"Augmented: {len(X_aug):,} rows total; URF subsample: {len(X_aug_urf):,}, T rate: {t_aug_urf.mean():.4f}")
 
-# ── URF config ────────────────────────────────────────────────────────────────
+t_aug_str = t_aug.map({1: 'test', 0: 'control'})
+
+# ── URF config (matches modeling.ipynb cell 90) ───────────────────────────────
 def make_urf():
     return UpliftRandomForestClassifier(
         control_name='control',
-        n_estimators=100,
-        max_depth=6,
-        max_features=20,
-        min_samples_leaf=500,
-        min_samples_treatment=100,
-        n_reg=100,
+        n_estimators=50,
+        max_depth=5,
+        max_features=10,
+        min_samples_leaf=1000,
+        min_samples_treatment=200,
+        n_reg=50,
         evaluationFunction='KL',
         normalization=True,
         random_state=42,
@@ -117,8 +124,8 @@ def make_urf():
 
 # ── Run experiments ───────────────────────────────────────────────────────────
 configs = [
-    ('URF (original 75/25)',      X_train, y_train, treatment_train_str),
-    ('URF (SMOTE top-10% ctrl)',  X_aug,   y_aug,   t_aug_str),
+    ('URF (original 75/25)',      X_train,   y_train,   treatment_train_str),
+    ('URF (SMOTE top-10% 200K)', X_aug_urf, y_aug_urf, t_aug_urf_str),
 ]
 
 results = []
@@ -131,13 +138,16 @@ for label, X_tr, y_tr, t_tr in configs:
     elapsed = time.time() - t0
     row = {
         'Model':      label,
+        'uplift@10%': uplift_at_k(y_test, pred, treatment_test, strategy='by_group', k=0.1),
+        'uplift@30%': uplift_at_k(y_test, pred, treatment_test, strategy='by_group', k=0.3),
         'Qini AUC':   qini_auc_score(y_test, pred, treatment_test),
         'Uplift AUC': uplift_auc_score(y_test, pred, treatment_test),
         'ASD':        asd_score(y_test, pred, treatment_test),
         'time_s':     round(elapsed, 1),
     }
     results.append(row)
-    print(f"  Qini={row['Qini AUC']:.4f}  Uplift={row['Uplift AUC']:.4f}  "
+    print(f"  uplift@10%={row['uplift@10%']:.4f}  uplift@30%={row['uplift@30%']:.4f}  "
+          f"Qini={row['Qini AUC']:.4f}  Uplift={row['Uplift AUC']:.4f}  "
           f"ASD={row['ASD']:.6f}  ({elapsed:.1f}s)")
 
 # ── Summary ───────────────────────────────────────────────────────────────────

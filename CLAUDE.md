@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Uplift Modeling project on the Lenta retail dataset (BigTarget Hackathon, Лента + Microsoft, 2020). Binary classification task estimating the causal effect of marketing communications (treatment) on customer store visits/purchases (target: `response_att`).
 
-**Current status:** EDA, preprocessing, baseline modeling, hyperparameter tuning, balance experiments, and advanced meta-learner comparison complete. Best model: **Class Transformation + LightGBM** (Qini AUC = 0.0752). See `reports/modeling_results.md` for detailed results and `reports/eda_summary.md` for EDA findings.
+**Current status:** EDA, preprocessing, baseline modeling, hyperparameter tuning, balance experiments, advanced meta-learner comparison, and URF experiments complete. Best model: **Class Transformation + LightGBM** (Qini AUC = 0.0752). All attempted alternatives (S/T-Learner, X/DR/R-Learner, CausalForestDML, URF, SMOTE balancing) underperform CT by 75–90%+. See `reports/modeling_results.md` for detailed results and `reports/eda_summary.md` for EDA findings.
 
 ## Setup
 
@@ -29,7 +29,7 @@ python3 -m jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeo
 
 ## Standalone Scripts
 
-For long-running experiments that exceed the 900s notebook cell timeout, use standalone Python scripts:
+For long-running experiments that exceed the 900s notebook cell timeout, use standalone Python scripts (run from repo root — both use relative paths):
 ```bash
 python3 run_section12.py   # CT-guided SMOTE: top-10% control as SMOTE template
 python3 run_section13_urf.py  # UpliftRandomForestClassifier experiment
@@ -146,6 +146,13 @@ Libraries: `causalml` 0.16.0, `econml` 0.16.0. **All dramatically worse than CT 
 
 ### CT-guided SMOTE: top-10% control as SMOTE template (modeling.ipynb section 12)
 Used CT scores to identify top-10% control observations (CR=17.7% vs 10.3% avg), used them as SMOTE source to generate 241K synthetic controls added to full train (722K total, 50/50 T/C). **Results: T-Learner +34.7% (0.0140→0.0189), S-Learner −68.2%.** T-Learner benefits because high-uplift-profile synthetic controls improve E[Y(0)|X] estimation in the high-uplift zone. S-Learner hurt by CR mismatch in the synthetic data. T-Learner still 4× below CT baseline. See `reports/modeling_results.md` section 13.
+
+### UpliftRandomForestClassifier (modeling.ipynb section 13 / run_section13_urf.py)
+`UpliftRandomForestClassifier` (causalml, KL criterion) — two variants tested:
+- URF original (75/25 split, 480K rows): Qini AUC = **0.0078** (−89.6% vs CT)
+- URF + CT-guided SMOTE (200K subsample, 50/50): Qini AUC = **0.0182** (−75.8% vs CT)
+
+URF config: `n_estimators=100, max_depth=6, max_features=20, min_samples_leaf=500, min_samples_treatment=100, n_reg=100, evaluationFunction='KL'`. Notebook uses reduced config (`n_estimators=50, max_depth=5`) for speed. Despite native uplift split criterion, URF cannot overcome the weak ATE (+0.75 п.п.) signal — same root cause as X/DR/R-Learner. URF original has excellent calibration (ASD=0.000037) but poor ranking. SMOTE gain is partly due to 200K subsample (unfair comparison vs 480K original). See `reports/modeling_results.md` section 14.
 
 ## Repository
 
