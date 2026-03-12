@@ -82,14 +82,28 @@ def decile_stats(pred, y, t):
     return pd.DataFrame(rows)
 
 # ── 4. Plot and save ──────────────────────────────────────────────────────────
+# ── Train predictions ────────────────────────────────────────────────────────
+ct_train_is  = ct.predict(X_train)                          # in-sample
+ct_iso_train = iso.predict(ct_train_is)                     # isotonic OOF proxy
+ct_lin_train = lr.predict(ct_train_is.reshape(-1, 1))       # linear OLS OOF proxy
+
+# Note: for proper OOF train metrics, ct_oof is used for isotonic/linear.
+# Here we re-use ct_oof (computed above) for isotonic and linear train preds.
+ct_iso_train_oof = iso.predict(ct_oof)
+ct_lin_train_oof = lr.predict(ct_oof.reshape(-1, 1))
+
 variants = [
-    ('CT + LightGBM (baseline)', ct_test,     'ct_baseline'),
-    ('CT + Linear OLS',          ct_lin_test,  'ct_linear_ols'),
-    ('CT + Isotonic (OOF+IPW)',  ct_iso_test,  'ct_isotonic'),
+    # (name, train_pred, train_note, test_pred, test_note)
+    ('CT + LightGBM (baseline)', ct_train_is,       '(train, in-sample)',
+                                  ct_test,            '(test)'),
+    ('CT + Linear OLS',          ct_lin_train_oof,  '(train, OOF)',
+                                  ct_lin_test,        '(test)'),
+    ('CT + Isotonic (OOF+IPW)',  ct_iso_train_oof,  '(train, OOF)',
+                                  ct_iso_test,        '(test)'),
 ]
 
-for name, pred, fname in variants:
-    bdf = decile_stats(pred, y_test, treatment_test)
+def save_decile_plot(pred, y, t, title, path):
+    bdf = decile_stats(pred, y, t)
     fig, ax = plt.subplots(figsize=(10, 5))
     bar_c = ['#2ecc71' if u > 0 else '#e74c3c' for u in bdf['Uplift']]
     ax.bar(bdf['Дециль'], bdf['Uplift'], color=bar_c, edgecolor='white', width=0.7)
@@ -100,14 +114,22 @@ for name, pred, fname in variants:
                 f"{row['Uplift']:.3f}", ha='center', va='bottom', fontsize=9)
     ax.set_xlabel('Дециль (1 = наименьший predicted uplift, 10 = наибольший)')
     ax.set_ylabel('Фактический uplift (CR_T − CR_C)')
-    ax.set_title(f'Uplift по децилям — {name} (тест)', fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=12, fontweight='bold')
     ax.set_xticks(bdf['Дециль'])
     ax.grid(True, alpha=0.3, axis='y')
     plt.tight_layout()
-    path = f'reports/figures/decile_{fname}.png'
     plt.savefig(path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"  Saved: {path}")
     print(bdf[['Дециль', 'Uplift']].to_string(index=False))
+
+for name, tr_pred, tr_note, te_pred, te_note in variants:
+    slug = name.lower().replace(' ', '_').replace('+', '').replace('(', '').replace(')', '').replace('/', '').replace('__', '_').strip('_')
+    save_decile_plot(tr_pred, y_train, treatment_train,
+                     f'Uplift по децилям — {name} {tr_note}',
+                     f'reports/figures/decile_{slug}_train.png')
+    save_decile_plot(te_pred, y_test, treatment_test,
+                     f'Uplift по децилям — {name} {te_note}',
+                     f'reports/figures/decile_{slug}_test.png')
 
 print("\nDone.")
