@@ -107,6 +107,7 @@ sklearn.utils.check_matplotlib_support = check_matplotlib_support
 - Evaluation metrics: uplift@k, Qini AUC, Uplift AUC, ASD (NOT standard AUC/accuracy)
   - **ASD** (Average Squared Deviation) = `mean((actual_uplift_k − predicted_uplift_k)²)` over 10 deciles. Measures calibration (lower = better). High Qini AUC and high ASD can coexist: CT has excellent ranking but poor calibration (predictions don't match actual uplift magnitudes). Meta-learners have low ASD but poor Qini AUC.
 - **Do NOT use `ClassTransformationReg`** — it requires `propensity_val` parameter and produces near-zero Qini AUC on this dataset. Use `ClassTransformation` (classifier version) instead.
+- **X/R-Learner: use Ridge, not LightGBM** — tree-based base learners (LGBM, CatBoost) overfit catastrophically on this weak-signal dataset (X-Learner negative Qini, R-Learner 20× overfit). Ridge(alpha=1000) for X-Learner, Ridge(alpha=100) for R-Learner gives positive Qini and ~5× overfit. See `modeling_core_models.ipynb` and `reports/modeling_results.md` section 19.
 - **`UpliftRandomForestClassifier` (causalml)** requires string treatment labels — convert ints back before use:
   ```python
   t_str = treatment.map({1: 'test', 0: 'control'})
